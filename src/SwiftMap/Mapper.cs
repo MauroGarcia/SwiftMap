@@ -1,19 +1,16 @@
-using SwiftMap.Internal;
-
 namespace SwiftMap;
 
 /// <summary>
 /// The main mapper. Lightweight, thread-safe, and backed by compiled expression trees.
+/// All nested mappings are inlined at compile time — zero per-call overhead beyond the destination objects.
 /// </summary>
 public sealed class Mapper : IMapper
 {
     private readonly MapperConfig _config;
-    private readonly MapperContext _context;
 
     public Mapper(MapperConfig config)
     {
         _config = config ?? throw new ArgumentNullException(nameof(config));
-        _context = new MapperContext(this);
     }
 
     /// <summary>
@@ -30,30 +27,30 @@ public sealed class Mapper : IMapper
     public TDestination Map<TDestination>(object source)
     {
         ArgumentNullException.ThrowIfNull(source);
-        var mapping = _config.GetOrCompileMapping(source.GetType(), typeof(TDestination), _context);
-        return (TDestination)mapping(source, _context);
+        var mapping = _config.GetOrCompileMapping(source.GetType(), typeof(TDestination));
+        return (TDestination)mapping(source);
     }
 
     public TDestination Map<TSource, TDestination>(TSource source)
     {
         ArgumentNullException.ThrowIfNull(source);
-        var mapping = _config.GetOrCompileMapping(typeof(TSource), typeof(TDestination), _context);
-        return (TDestination)mapping(source, _context);
+        var mapping = _config.GetOrCompileMapping(typeof(TSource), typeof(TDestination));
+        return (TDestination)mapping(source!);
     }
 
     public TDestination Map<TSource, TDestination>(TSource source, TDestination destination)
     {
         ArgumentNullException.ThrowIfNull(source);
         ArgumentNullException.ThrowIfNull(destination);
-        var mapping = _config.GetOrCompileMappingInto(typeof(TSource), typeof(TDestination), _context);
-        mapping(source, destination, _context);
+        var mapping = _config.GetOrCompileMappingInto(typeof(TSource), typeof(TDestination));
+        mapping(source, destination);
         return destination;
     }
 
     public object Map(object source, Type sourceType, Type destinationType)
     {
         ArgumentNullException.ThrowIfNull(source);
-        var mapping = _config.GetOrCompileMapping(sourceType, destinationType, _context);
-        return mapping(source, _context);
+        var mapping = _config.GetOrCompileMapping(sourceType, destinationType);
+        return mapping(source);
     }
 }
