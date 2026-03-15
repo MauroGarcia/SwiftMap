@@ -5,9 +5,7 @@
 **Zero-allocation, expression-tree-compiled object mapper for .NET**
 
 [![NuGet](https://img.shields.io/nuget/v/SwiftMap?style=flat-square&color=004880&label=NuGet)](https://www.nuget.org/packages/SwiftMap)
-[![NuGet Downloads](https://img.shields.io/nuget/dt/SwiftMap?style=flat-square&color=004880)](https://www.nuget.org/packages/SwiftMap)
 [![.NET](https://img.shields.io/badge/.NET-9.0-512BD4?style=flat-square)](https://dotnet.microsoft.com/download)
-[![Build](https://img.shields.io/github/actions/workflow/status/YOUR_USERNAME/SwiftMap/build.yml?branch=master&style=flat-square)](https://github.com/YOUR_USERNAME/SwiftMap/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](LICENSE)
 
 _Convention-based property mapping backed by compiled expression trees — zero reflection at call time._
@@ -43,8 +41,6 @@ Install-Package SwiftMap
 ```xml
 <PackageReference Include="SwiftMap" Version="1.0.0" />
 ```
-
-> **Note:** SwiftMap is a .NET library distributed exclusively through NuGet. npm publishing is not applicable.
 
 ---
 
@@ -202,8 +198,6 @@ ShortRun: 3 warmups + 7 iterations
 | Nested object     | **2.0× faster**     | 1.24× slower    | identical — 104 B    |
 | Collection ×1000  | **1.8× faster**     | 1.63× slower    | identical — 70.34 KB |
 | Record            | **2.6× faster**     | 1.29× slower    | identical — 48 B     |
-
-> SwiftMap allocates exactly the same memory as AutoMapper and Mapster across all scenarios — only the destination objects. Nested mappings are inlined at compile time; collections use pre-allocated for-loops instead of LINQ.
 
 ---
 
