@@ -117,54 +117,54 @@ ShortRun: 3 warmups + 7 iterations
 
 | Method         | Mean      | Ratio        | Allocated |
 |----------------|----------:|-------------:|----------:|
-| Manual         |  12.15 ns | baseline     |      64 B |
-| Mapster        |  28.19 ns | 2.35x slower |      64 B |
-| **SwiftMap**   |  76.99 ns | 6.43x slower |     192 B |
-| AutoMapper     |  77.87 ns | 6.51x slower |      64 B |
+| Manual         |  11.37 ns | baseline     |      64 B |
+| Mapster        |  24.08 ns | 2.14x slower |      64 B |
+| **SwiftMap**   |  34.06 ns | 3.02x slower |      64 B |
+| AutoMapper     |  74.40 ns | 6.60x slower |      64 B |
 
 ### Nested object (parent + child)
 
-| Method         | Mean       | Ratio        | Allocated |
-|----------------|-----------:|-------------:|----------:|
-| Manual         |   19.66 ns | baseline     |     104 B |
-| Mapster        |   38.44 ns | 1.96x slower |     104 B |
-| AutoMapper     |   86.66 ns | 4.42x slower |     104 B |
-| **SwiftMap**   |  178.36 ns | 9.09x slower |     360 B |
+| Method         | Mean      | Ratio        | Allocated |
+|----------------|----------:|-------------:|----------:|
+| Manual         |  19.13 ns | baseline     |     104 B |
+| Mapster        |  35.79 ns | 1.88x slower |     104 B |
+| **SwiftMap**   |  44.87 ns | 2.35x slower |     104 B |
+| AutoMapper     |  86.48 ns | 4.54x slower |     104 B |
 
 ### Collection (N items)
 
-| Method         | Count | Mean      | Ratio        | Allocated  |
-|----------------|------:|----------:|-------------:|-----------:|
-| Manual         |   100 |  1.282 µs | baseline     |    7.05 KB |
-| Mapster        |   100 |  2.094 µs | 1.66x slower |    7.05 KB |
-| **SwiftMap**   |   100 |  7.110 µs | 5.65x slower |   19.55 KB |
-| AutoMapper     |   100 |  7.719 µs | 6.13x slower |    7.05 KB |
-| Manual         |  1000 | 11.958 µs | baseline     |   70.34 KB |
-| Mapster        |  1000 | 24.255 µs | 2.04x slower |   70.34 KB |
-| **SwiftMap**   |  1000 | 70.002 µs | 5.88x slower |  195.34 KB |
-| AutoMapper     |  1000 | 70.880 µs | 5.95x slower |   70.34 KB |
+| Method         | Count | Mean      | Ratio        | Allocated |
+|----------------|------:|----------:|-------------:|----------:|
+| Manual         |   100 |  1.026 µs | baseline     |   7.05 KB |
+| Mapster        |   100 |  2.149 µs | 2.09x slower |   7.05 KB |
+| **SwiftMap**   |   100 |  3.874 µs | 3.78x slower |   7.05 KB |
+| AutoMapper     |   100 |  7.367 µs | 7.18x slower |   7.05 KB |
+| Manual         |  1000 | 12.423 µs | baseline     |  70.34 KB |
+| Mapster        |  1000 | 23.752 µs | 1.94x slower |  70.34 KB |
+| **SwiftMap**   |  1000 | 39.950 µs | 3.26x slower |  70.34 KB |
+| AutoMapper     |  1000 | 77.463 µs | 6.33x slower |  70.34 KB |
 
 ### Record (primary constructor)
 
 | Method         | Mean      | Ratio        | Allocated |
 |----------------|----------:|-------------:|----------:|
-| Manual         |   9.928 ns | baseline    |      48 B |
-| Mapster        |  26.446 ns | 2.67x slower |      48 B |
-| **SwiftMap**   |  71.047 ns | 7.16x slower |     176 B |
-| AutoMapper     |  81.177 ns | 8.19x slower |      48 B |
+| Manual         |  8.636 ns | baseline     |      48 B |
+| Mapster        | 24.900 ns | 2.89x slower |      48 B |
+| **SwiftMap**   | 36.073 ns | 4.19x slower |      48 B |
+| AutoMapper     | 76.145 ns | 8.84x slower |      48 B |
 
 ### Analysis
 
-| Scenario       | SwiftMap vs AutoMapper      |
-|----------------|-----------------------------|
-| Simple object  | ~tied (76.99 vs 77.87 ns)   |
-| Nested object  | 2.1x slower                 |
-| Collection ×1000 | ~tied (70.0 vs 70.9 µs)  |
-| Record         | **12% faster**              |
+| Scenario         | SwiftMap vs AutoMapper  | SwiftMap vs Mapster  | Allocated        |
+|------------------|-------------------------|----------------------|------------------|
+| Simple object    | **2.2x faster**         | 1.4x slower          | identical (64 B) |
+| Nested object    | **1.9x faster**         | 1.3x slower          | identical (104 B)|
+| Collection ×1000 | **1.9x faster**         | 1.7x slower          | identical (70 KB)|
+| Record           | **2.1x faster**         | 1.5x slower          | identical (48 B) |
 
-SwiftMap matches or beats AutoMapper in flat and collection scenarios. The allocation overhead (~3x) comes from `MapperContext` passing and boxing through nested map calls — the primary optimization target.
+SwiftMap allocates exactly the same as AutoMapper and Mapster across all scenarios — only the destination objects. Nested mappings are inlined at compile time into the parent expression tree, and collections use pre-allocated for-loops instead of LINQ.
 
-Mapster is fastest across all scenarios due to Roslyn source generation (compile-time code emission).
+Mapster is fastest due to Roslyn source generation (compile-time code emission vs. runtime expression tree compilation).
 
 ---
 
@@ -183,7 +183,6 @@ src/SwiftMap/
 │   └── ServiceCollectionExtensions.cs  # AddSwiftMap(...)
 └── Internal/
     ├── MappingCompiler.cs           # Expression tree compiler (core engine)
-    ├── MapperContext.cs             # Runtime context for nested mapping
     └── TypePair.cs                  # (Source, Destination) dictionary key
 ```
 
