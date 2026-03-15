@@ -28,6 +28,18 @@ BenchmarkRunner.Run(
 ], config);
 
 // ─────────────────────────────────────────────
+// SOURCE-GENERATED MAPPER
+// ─────────────────────────────────────────────
+
+[SwiftMap.Mapper]
+public partial class BenchMapper
+{
+    public partial PersonDest   MapPerson(PersonSource source);
+    public partial OrderDest    MapOrder(OrderSource source);
+    public partial PersonRecordDest MapRecord(PersonRecord source);
+}
+
+// ─────────────────────────────────────────────
 // MODELS
 // ─────────────────────────────────────────────
 
@@ -102,6 +114,7 @@ public class SimpleObjectBenchmark
     private PersonSource _src = null!;
     private SwiftIMapper _swift = null!;
     private AM.IMapper _auto = null!;
+    private static readonly BenchMapper _gen = new();
 
     [GlobalSetup]
     public void Setup()
@@ -125,6 +138,7 @@ public class SimpleObjectBenchmark
         _src.Adapt<PersonDest>();
         _swift.Map<PersonDest>(_src);
         _auto.Map<PersonDest>(_src);
+        _gen.MapPerson(_src);
     }
 
     [Benchmark(Baseline = true)]
@@ -137,6 +151,9 @@ public class SimpleObjectBenchmark
             Email = s.Email, Age = s.Age, Score = s.Score, CreatedAt = s.CreatedAt
         };
     }
+
+    [Benchmark]
+    public PersonDest SwiftGenerated() => _gen.MapPerson(_src);
 
     [Benchmark]
     public PersonDest Swift() => _swift.Map<PersonDest>(_src);
@@ -160,6 +177,7 @@ public class NestedObjectBenchmark
     private OrderSource _src = null!;
     private SwiftIMapper _swift = null!;
     private AM.IMapper _auto = null!;
+    private static readonly BenchMapper _gen = new();
 
     [GlobalSetup]
     public void Setup()
@@ -192,6 +210,7 @@ public class NestedObjectBenchmark
         _src.Adapt<OrderDest>();
         _swift.Map<OrderDest>(_src);
         _auto.Map<OrderDest>(_src);
+        _gen.MapOrder(_src);
     }
 
     [Benchmark(Baseline = true)]
@@ -207,6 +226,9 @@ public class NestedObjectBenchmark
             } : null
         };
     }
+
+    [Benchmark]
+    public OrderDest SwiftGenerated() => _gen.MapOrder(_src);
 
     [Benchmark]
     public OrderDest Swift() => _swift.Map<OrderDest>(_src);
@@ -230,6 +252,7 @@ public class CollectionBenchmark
     private PersonSource[] _srcs = null!;
     private SwiftIMapper _swift = null!;
     private AM.IMapper _auto = null!;
+    private static readonly BenchMapper _gen = new();
 
     [Params(100, 1000)]
     public int Count { get; set; }
@@ -256,6 +279,7 @@ public class CollectionBenchmark
         _srcs[0].Adapt<PersonDest>();
         _swift.Map<PersonDest>(_srcs[0]);
         _auto.Map<PersonDest>(_srcs[0]);
+        _gen.MapPerson(_srcs[0]);
     }
 
     [Benchmark(Baseline = true)]
@@ -272,6 +296,16 @@ public class CollectionBenchmark
                 Email = s.Email, Age = s.Age, Score = s.Score, CreatedAt = s.CreatedAt
             };
         }
+        return result;
+    }
+
+    [Benchmark]
+    public PersonDest[] SwiftGenerated()
+    {
+        var items = _srcs.AsSpan(0, Count);
+        var result = new PersonDest[Count];
+        for (int i = 0; i < Count; i++)
+            result[i] = _gen.MapPerson(items[i]);
         return result;
     }
 
@@ -318,6 +352,7 @@ public class RecordBenchmark
     private PersonRecord _src = null!;
     private SwiftIMapper _swift = null!;
     private AM.IMapper _auto = null!;
+    private static readonly BenchMapper _gen = new();
 
     [GlobalSetup]
     public void Setup()
@@ -336,11 +371,15 @@ public class RecordBenchmark
         _src.Adapt<PersonRecordDest>();
         _swift.Map<PersonRecordDest>(_src);
         _auto.Map<PersonRecordDest>(_src);
+        _gen.MapRecord(_src);
     }
 
     [Benchmark(Baseline = true)]
     public PersonRecordDest Manual() =>
         new(_src.Id, _src.FirstName, _src.LastName, _src.Email, _src.Age);
+
+    [Benchmark]
+    public PersonRecordDest SwiftGenerated() => _gen.MapRecord(_src);
 
     [Benchmark]
     public PersonRecordDest Swift() => _swift.Map<PersonRecordDest>(_src);

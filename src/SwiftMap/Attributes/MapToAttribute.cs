@@ -1,6 +1,15 @@
 namespace SwiftMap;
 
 /// <summary>
+/// Marks a partial class as a source-generated mapper (Mapperly-style).
+/// Decorate a <c>partial class</c> with this attribute and declare
+/// <c>public partial TDest Map(TSource source)</c> methods — the generator
+/// will emit zero-overhead, compile-time assignment bodies for each method.
+/// </summary>
+[AttributeUsage(AttributeTargets.Class, Inherited = false)]
+public sealed class MapperAttribute : Attribute { }
+
+/// <summary>
 /// Declares that this type can be mapped to the specified destination type.
 /// Convention-based matching is applied automatically.
 /// </summary>
