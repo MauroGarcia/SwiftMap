@@ -9,6 +9,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](LICENSE)
 
 _Convention-based property mapping backed by compiled expression trees — zero reflection at call time._
+_Source generator mode achieves **manual-mapping parity** at compile time (Mapperly-style)._
 
 </div>
 
@@ -16,10 +17,10 @@ _Convention-based property mapping backed by compiled expression trees — zero 
 
 ## Why SwiftMap?
 
-- **Zero allocations at mapping time** — only the destination object is allocated; no boxing, no intermediate arrays, no iterators
-- **Expression tree compilation** — mappings compile once to native delegates; subsequent calls are as fast as hand-written code
+- **Source generator mode** — `[Mapper]` partial class emits mapping bodies at **compile time**; zero startup cost, zero delegate dispatch, zero reflection at call time — identical to hand-written code
+- **Runtime expression-tree mode** — mappings compile once to native delegates via [FastExpressionCompiler](https://github.com/dadhi/FastExpressionCompiler); subsequent calls are allocation-free
 - **Fluent, discoverable API** — `ForMember`, `Ignore`, `AfterMap`, `ReverseMap`, `NullSubstitute`, `Condition`, and more
-- **No heavy dependencies** — one NuGet reference; only depends on `Microsoft.Extensions.DependencyInjection.Abstractions`
+- **No heavy dependencies** — single NuGet package; only depends on `Microsoft.Extensions.DependencyInjection.Abstractions`
 - **Records & init-only properties** — full support for C# 9+ records via primary constructor selection
 - **First-class DI support** — drop-in `services.AddSwiftMap(...)` with profile scanning
 
@@ -45,6 +46,28 @@ Install-Package SwiftMap
 ---
 
 ## Quick Start
+
+### Source Generator Mode (recommended — compile-time, zero overhead)
+
+```csharp
+using SwiftMap;
+
+[Mapper]
+public partial class AppMapper
+{
+    public partial PersonDto   Map(Person source);
+    public partial OrderDto    Map(Order source);
+    public partial ProductDto  Map(Product source);
+}
+
+// Usage — no DI, no startup cost, velocity = manual code
+var mapper = new AppMapper();
+var dto = mapper.Map(person);
+```
+
+The `[Mapper]` attribute triggers the included Roslyn source generator. It analyses your types at compile time and emits efficient object-initializer bodies — supporting flat objects, nested objects (null-safe is-pattern), collections (for-loop, no LINQ), records (primary constructor), enums, and nullable unwrapping.
+
+### Runtime Expression-Tree Mode
 
 ```csharp
 // 1. Create a mapper — once at startup or via DI
@@ -152,71 +175,87 @@ ShortRun: 3 warmups + 7 iterations
 
 ### Simple flat object (7 properties)
 
-| Method         |      Mean |    Error |   StdDev | Ratio         | Allocated |
-|:---------------|----------:|---------:|---------:|:--------------|----------:|
-| Manual         |  13.23 ns | 3.432 ns | 1.524 ns | baseline      |      64 B |
-| Mapster        |  25.48 ns | 3.667 ns | 1.628 ns | 1.95× slower  |      64 B |
-| **SwiftMap**   |  38.04 ns | 5.319 ns | 2.362 ns | 2.91× slower  |      64 B |
-| AutoMapper     |  76.79 ns | 7.118 ns | 3.161 ns | 5.87× slower  |      64 B |
+| Method              |      Mean |    Error |   StdDev | Ratio         | Allocated |
+|:--------------------|----------:|---------:|---------:|:--------------|----------:|
+| Manual              |  15.19 ns | 4.863 ns | 2.159 ns | baseline      |      64 B |
+| **SwiftGenerated**  |  15.27 ns | 5.110 ns | 2.269 ns | **1.03×**     |      64 B |
+| Mapster             |  30.37 ns | 4.921 ns | 2.185 ns | 2.04× slower  |      64 B |
+| SwiftMap (runtime)  |  39.75 ns | 8.234 ns | 3.656 ns | 2.67× slower  |      64 B |
+| AutoMapper          |  89.95 ns |17.732 ns | 7.873 ns | 6.04× slower  |      64 B |
 
 ### Nested object (parent + child)
 
-| Method         |      Mean |    Error |   StdDev | Ratio         | Allocated |
-|:---------------|----------:|---------:|---------:|:--------------|----------:|
-| Manual         |  19.89 ns | 6.382 ns | 2.834 ns | baseline      |     104 B |
-| Mapster        |  35.48 ns | 7.371 ns | 3.273 ns | 1.82× slower  |     104 B |
-| **SwiftMap**   |  43.84 ns | 7.824 ns | 3.474 ns | 2.24× slower  |     104 B |
-| AutoMapper     |  88.62 ns | 7.901 ns | 3.508 ns | 4.54× slower  |     104 B |
+| Method              |      Mean |    Error |   StdDev | Ratio         | Allocated |
+|:--------------------|----------:|---------:|---------:|:--------------|----------:|
+| Manual              |  22.18 ns | 6.680 ns | 2.966 ns | baseline      |     104 B |
+| **SwiftGenerated**  |  22.97 ns | 6.421 ns | 2.851 ns | **1.05×**     |     104 B |
+| Mapster             |  40.52 ns | 8.772 ns | 3.895 ns | 1.86× slower  |     104 B |
+| SwiftMap (runtime)  |  48.76 ns |13.197 ns | 5.859 ns | 2.23× slower  |     104 B |
+| AutoMapper          | 102.62 ns |18.835 ns | 8.363 ns | 4.70× slower  |     104 B |
 
 ### Collection mapping
 
-| Method         | Count |      Mean |    Error |   StdDev | Ratio         | Allocated |
-|:---------------|------:|----------:|---------:|---------:|:--------------|----------:|
-| Manual         |   100 |  1.192 µs | 0.383 µs | 0.170 µs | baseline      |   7.05 KB |
-| Mapster        |   100 |  2.171 µs | 0.484 µs | 0.215 µs | 1.86× slower  |   7.05 KB |
-| **SwiftMap**   |   100 |  3.942 µs | 0.428 µs | 0.190 µs | 3.37× slower  |   7.05 KB |
-| AutoMapper     |   100 | 10.843 µs | 1.069 µs | 0.475 µs | 9.27× slower  |   7.05 KB |
-| Manual         |  1000 | 12.421 µs | 3.594 µs | 1.596 µs | baseline      |  70.34 KB |
-| Mapster        |  1000 | 25.329 µs | 4.526 µs | 2.010 µs | 2.07× slower  |  70.34 KB |
-| **SwiftMap**   |  1000 | 41.190 µs | 5.088 µs | 2.259 µs | 3.37× slower  |  70.34 KB |
-| AutoMapper     |  1000 | 74.414 µs | 9.810 µs | 4.356 µs | 6.08× slower  |  70.34 KB |
+| Method              | Count |      Mean |     Error |    StdDev | Ratio         | Allocated |
+|:--------------------|------:|----------:|----------:|----------:|:--------------|----------:|
+| Manual              |   100 |  1.425 µs |  0.534 µs |  0.237 µs | baseline      |   7.05 KB |
+| **SwiftGenerated**  |   100 |  1.519 µs |  0.573 µs |  0.254 µs | **1.09×**     |   7.05 KB |
+| Mapster             |   100 |  2.637 µs |  0.542 µs |  0.241 µs | 1.90× slower  |   7.05 KB |
+| SwiftMap (runtime)  |   100 |  4.372 µs |  0.968 µs |  0.430 µs | 3.14× slower  |   7.05 KB |
+| AutoMapper          |   100 |  8.486 µs |  3.128 µs |  1.389 µs | 6.10× slower  |   7.05 KB |
+| Manual              |  1000 | 14.202 µs |  5.038 µs |  2.237 µs | baseline      |  70.34 KB |
+| **SwiftGenerated**  |  1000 | 15.540 µs |  4.086 µs |  1.814 µs | **1.12×**     |  70.34 KB |
+| Mapster             |  1000 | 30.888 µs |  7.347 µs |  3.262 µs | 2.23× slower  |  70.34 KB |
+| SwiftMap (runtime)  |  1000 | 43.908 µs | 13.642 µs |  6.057 µs | 3.17× slower  |  70.34 KB |
+| AutoMapper          |  1000 | 91.405 µs | 14.038 µs |  6.233 µs | 6.59× slower  |  70.34 KB |
 
 ### Record (primary constructor)
 
-| Method         |       Mean |    Error |   StdDev | Ratio         | Allocated |
-|:---------------|-----------:|---------:|---------:|:--------------|----------:|
-| Manual         |   9.838 ns | 2.570 ns | 1.141 ns | baseline      |      48 B |
-| Mapster        |  27.177 ns | 3.917 ns | 1.739 ns | 2.80× slower  |      48 B |
-| **SwiftMap**   |  35.129 ns | 5.186 ns | 2.303 ns | 3.61× slower  |      48 B |
-| AutoMapper     |  92.226 ns | 9.214 ns | 4.091 ns | 9.49× slower  |      48 B |
+| Method              |      Mean |    Error |   StdDev | Ratio         | Allocated |
+|:--------------------|----------:|---------:|---------:|:--------------|----------:|
+| Manual              |  11.27 ns | 4.766 ns | 2.116 ns | baseline      |      48 B |
+| **SwiftGenerated**  |  12.89 ns | 4.260 ns | 1.891 ns | **1.18×**     |      48 B |
+| Mapster             |  30.10 ns | 6.656 ns | 2.955 ns | 2.74× slower  |      48 B |
+| SwiftMap (runtime)  |  37.35 ns | 7.100 ns | 3.153 ns | 3.40× slower  |      48 B |
+| AutoMapper          |  86.29 ns |16.937 ns | 7.520 ns | 7.86× slower  |      48 B |
 
 ### At a glance
 
-| Scenario          | vs AutoMapper       | vs Mapster      | Allocated            |
-|:------------------|:--------------------|:----------------|:---------------------|
-| Simple object     | **2.0× faster**     | 1.49× slower    | identical — 64 B     |
-| Nested object     | **2.0× faster**     | 1.24× slower    | identical — 104 B    |
-| Collection ×1000  | **1.8× faster**     | 1.63× slower    | identical — 70.34 KB |
-| Record            | **2.6× faster**     | 1.29× slower    | identical — 48 B     |
+| Scenario          | SwiftGenerated vs Manual | SwiftGenerated vs Mapster | SwiftGenerated vs AutoMapper |
+|:------------------|:------------------------:|:-------------------------:|:----------------------------:|
+| Simple object     | **≈ parity (1.03×)**     | **2.0× faster**           | **5.9× faster**              |
+| Nested object     | **≈ parity (1.05×)**     | **1.8× faster**           | **4.5× faster**              |
+| Collection ×1000  | **≈ parity (1.12×)**     | **2.0× faster**           | **5.9× faster**              |
+| Record            | **≈ parity (1.18×)**     | **2.3× faster**           | **6.7× faster**              |
+
+> All measurements: same allocated memory as manual code (no overhead).
 
 ---
 
 ## Project Structure
 
 ```
-src/SwiftMap/
-├── Mapper.cs                            # Entry point — Mapper.Create(...)
-├── IMapper.cs                           # Public interface
-├── MapperConfig.cs                      # Configuration + compiled delegate cache
-├── TypeMapConfig.cs                     # Fluent API: ForMember, Ignore, AfterMap...
-├── MapProfile.cs                        # Base class for profiles
-├── Attributes/
-│   └── MapToAttribute.cs                # [MapTo], [MapFrom], [IgnoreMap], [MapProperty]
-├── Extensions/
-│   └── ServiceCollectionExtensions.cs   # AddSwiftMap(...)
-└── Internal/
-    ├── MappingCompiler.cs               # Expression tree compiler (core engine)
-    └── TypePair.cs                      # (Source, Destination) dictionary key
+src/
+├── SwiftMap/                              # Runtime expression-tree mapper
+│   ├── Mapper.cs                          # Entry point — Mapper.Create(...)
+│   ├── IMapper.cs                         # Public interface
+│   ├── MapperConfig.cs                    # Configuration + compiled delegate cache
+│   ├── TypeMapConfig.cs                   # Fluent API: ForMember, Ignore, AfterMap...
+│   ├── MapProfile.cs                      # Base class for profiles
+│   ├── Attributes/
+│   │   └── MapToAttribute.cs              # [MapTo], [MapFrom], [IgnoreMap], [MapProperty], [Mapper]
+│   ├── Extensions/
+│   │   └── ServiceCollectionExtensions.cs # AddSwiftMap(...)
+│   └── Internal/
+│       ├── MappingCompiler.cs             # Expression tree compiler (core engine)
+│       └── TypePair.cs                    # (Source, Destination) dictionary key
+└── SwiftMap.SourceGenerator/              # Roslyn IIncrementalGenerator
+    ├── MapperGenerator.cs                 # [Generator] entry point
+    ├── Models/                            # MapperClassModel, MappingMethodModel, MappedPropertyModel
+    ├── Pipeline/
+    │   └── MapperModelExtractor.cs        # Semantic analysis
+    └── Emit/
+        ├── MappingBodyEmitter.cs          # Code generation
+        └── SourceWriter.cs                # Indented string builder
 ```
 
 ---
@@ -224,7 +263,7 @@ src/SwiftMap/
 ## Roadmap
 
 - [x] **FastExpressionCompiler integration** — `CompileFast()` replaces `Expression.Compile()` for faster delegate creation
-- [ ] **Source generator mode** — emit mapping code at compile time (Mapperly-style) to reach manual-mapping parity with zero startup cost
+- [x] **Source generator mode** — `[Mapper]` partial class emits mapping bodies at compile time; reaches manual-mapping parity
 - [ ] **Async mapping** — `MapAsync<TDest>(source)` for pipelines that need async value resolution
 - [ ] **IQueryable projection** — `ProjectTo<TDest>()` for ORM query projection
 - [ ] **NuGet release** — publish `SwiftMap` to nuget.org
