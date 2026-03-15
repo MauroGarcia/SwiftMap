@@ -305,23 +305,22 @@ src/
 - [x] **Semântica de Patch** — `mapper.Patch(dto, entity)` aplica apenas campos não-nulos; suporte nativo a endpoints HTTP PATCH
 - [ ] **Mapeamento assíncrono** — `MapAsync<TDest>(source)` para pipelines que precisam de resolução assíncrona de valores
 - [ ] **Projeção IQueryable** — `ProjectTo<TDest>()` para projeção em queries de ORM
-- [ ] **Release no NuGet** — publicar `SwiftMap` no nuget.org
+- [x] **Release no NuGet** — `SwiftMap` disponível em [nuget.org/packages/SwiftMap](https://www.nuget.org/packages/SwiftMap)
 
 ---
 
 ## Contribuindo
 
-Contribuições são bem-vindas! Por favor:
+Contribuições são bem-vindas! Veja o [CONTRIBUTING.md](CONTRIBUTING.md) para o guia completo.
 
+Resumo:
 1. Faça um fork e crie um branch de feature (`git checkout -b feature/minha-feature`)
 2. Adicione ou atualize testes para cobrir sua mudança
 3. Execute os benchmarks para verificar que não houve regressão de performance:
    ```bash
    dotnet run -c Release --project benchmarks/SwiftMap.Benchmarks
    ```
-4. Abra um pull request com uma descrição clara do que foi alterado e por quê
-
-Para mudanças significativas, abra uma issue primeiro para discutir a abordagem.
+4. Abra um pull request — para mudanças significativas, abra uma issue primeiro para discutir a abordagem
 
 ---
 

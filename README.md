@@ -305,23 +305,22 @@ src/
 - [x] **Patch semantics** — `mapper.Patch(dto, entity)` applies only non-null fields; built-in support for HTTP PATCH endpoints
 - [ ] **Async mapping** — `MapAsync<TDest>(source)` for pipelines that need async value resolution
 - [ ] **IQueryable projection** — `ProjectTo<TDest>()` for ORM query projection
-- [ ] **NuGet release** — publish `SwiftMap` to nuget.org
+- [x] **NuGet release** — `SwiftMap` is available on [nuget.org/packages/SwiftMap](https://www.nuget.org/packages/SwiftMap)
 
 ---
 
 ## Contributing
 
-Contributions are welcome! Please:
+Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for full guidelines.
 
+Quick steps:
 1. Fork and create a feature branch (`git checkout -b feature/my-feature`)
 2. Add or update tests to cover your change
-3. Run the benchmark suite to verify no performance regression:
+3. Run the benchmarks to verify no performance regression:
    ```bash
    dotnet run -c Release --project benchmarks/SwiftMap.Benchmarks
    ```
-4. Open a pull request with a clear description of what changed and why
-
-For significant changes, open an issue first to discuss the approach.
+4. Open a pull request — for significant changes, open an issue first to discuss the approach
 
 ---
 
