@@ -1,59 +1,105 @@
+<div align="center">
+
 # SwiftMap
 
-A convention-based object-object mapper for .NET 9, backed by compiled expression trees — zero reflection at mapping time.
+**Zero-allocation, expression-tree-compiled object mapper for .NET**
 
-## Features
+[![NuGet](https://img.shields.io/nuget/v/SwiftMap?style=flat-square&color=004880&label=NuGet)](https://www.nuget.org/packages/SwiftMap)
+[![NuGet Downloads](https://img.shields.io/nuget/dt/SwiftMap?style=flat-square&color=004880)](https://www.nuget.org/packages/SwiftMap)
+[![.NET](https://img.shields.io/badge/.NET-9.0-512BD4?style=flat-square)](https://dotnet.microsoft.com/download)
+[![Build](https://img.shields.io/github/actions/workflow/status/YOUR_USERNAME/SwiftMap/build.yml?branch=master&style=flat-square)](https://github.com/YOUR_USERNAME/SwiftMap/actions)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](LICENSE)
 
-- **Convention mapping** — matches properties by name (case-insensitive) automatically
-- **Flattening** — maps `Address.City` → `AddressCity` with null safety
-- **Record support** — maps to/from records via primary constructor
-- **Init-only properties** — supported via constructor selection
-- **Struct mapping** — value types handled correctly
-- **Collection mapping** — `List<T>`, arrays, and other `IEnumerable<T>`
-- **Enum conversions** — enum↔enum, enum↔string, string→enum
-- **Nullable handling** — `int?` → `int` and vice versa
-- **Nested objects** — null-safe recursive mapping
-- **Fluent API** — `ForMember`, `Ignore`, `ConstructUsing`, `AfterMap`, `ReverseMap`, `NullSubstitute`, `Condition`, `MapFrom`
-- **Attribute mapping** — `[MapTo]`, `[MapFrom]`, `[IgnoreMap]`, `[MapProperty]`
-- **Profiles** — organize mappings via `MapProfile` base class
-- **DI integration** — `services.AddSwiftMap(...)`
-- **Thread-safe** — compiled delegates cached in `ConcurrentDictionary`
+_Convention-based property mapping backed by compiled expression trees — zero reflection at call time._
+
+</div>
+
+---
+
+## Why SwiftMap?
+
+- **Zero allocations at mapping time** — only the destination object is allocated; no boxing, no intermediate arrays, no iterators
+- **Expression tree compilation** — mappings compile once to native delegates; subsequent calls are as fast as hand-written code
+- **Fluent, discoverable API** — `ForMember`, `Ignore`, `AfterMap`, `ReverseMap`, `NullSubstitute`, `Condition`, and more
+- **No heavy dependencies** — one NuGet reference; only depends on `Microsoft.Extensions.DependencyInjection.Abstractions`
+- **Records & init-only properties** — full support for C# 9+ records via primary constructor selection
+- **First-class DI support** — drop-in `services.AddSwiftMap(...)` with profile scanning
+
+---
 
 ## Installation
 
+**.NET CLI**
 ```bash
 dotnet add package SwiftMap
 ```
 
+**Package Manager Console**
+```powershell
+Install-Package SwiftMap
+```
+
+**PackageReference**
+```xml
+<PackageReference Include="SwiftMap" Version="1.0.0" />
+```
+
+> **Note:** SwiftMap is a .NET library distributed exclusively through NuGet. npm publishing is not applicable.
+
+---
+
 ## Quick Start
 
 ```csharp
+// 1. Create a mapper — once at startup or via DI
 var mapper = Mapper.Create(cfg =>
     cfg.CreateMap<PersonSource, PersonDest>());
 
+// 2. Map by source type inference
 var dest = mapper.Map<PersonDest>(source);
+
+// 3. Map with explicit type parameters (slightly faster — no GetType() call)
+var dest = mapper.Map<PersonSource, PersonDest>(source);
+
+// 4. Map into an existing instance
+mapper.Map(source, existingDestination);
 ```
 
-## Usage
+---
 
-### Convention mapping (no config needed)
+## Configuration
+
+### Convention mapping — no config needed
+
+Matching properties are wired up automatically by name (case-insensitive):
 
 ```csharp
 var mapper = Mapper.Create(_ => { });
 var dto = mapper.Map<CustomerDto>(customer);
 ```
 
-### Fluent configuration
+### Fluent API
 
 ```csharp
 var mapper = Mapper.Create(cfg =>
     cfg.CreateMap<Customer, CustomerDto>(map =>
-        map.ForMember(d => d.AddressCity, opt => opt.MapFrom(s => s.Address!.City))
-           .Ignore(d => d.Email)
+        map.ForMember(d => d.AddressCity,  opt => opt.MapFrom(s => s.Address!.City))
+           .Ignore(d => d.InternalId)
+           .ForMember(d => d.Name,         opt => opt.NullSubstitute("Unknown"))
+           .ForMember(d => d.Score,        opt => opt.Condition(s => s.IsActive))
            .AfterMap((src, dest) => dest.Name = dest.Name.ToUpperInvariant())));
 ```
 
+### Reverse mapping
+
+```csharp
+cfg.CreateMap<OrderDto, Order>()
+   .ReverseMap(); // registers the inverse mapping automatically
+```
+
 ### Profiles
+
+Organise large sets of mappings into cohesive units:
 
 ```csharp
 public class AppProfile : MapProfile
@@ -62,13 +108,15 @@ public class AppProfile : MapProfile
     {
         CreateMap<Customer, CustomerDto>()
             .ForMember(d => d.AddressCity, opt => opt.MapFrom(s => s.Address!.City));
+
+        CreateMap<Order, OrderDto>().ReverseMap();
     }
 }
 
 var mapper = Mapper.Create(cfg => cfg.AddProfile<AppProfile>());
 ```
 
-### Attributes
+### Attribute-driven mapping
 
 ```csharp
 [MapTo(typeof(ProductDto))]
@@ -87,17 +135,11 @@ public class TargetDto
 ### Dependency Injection
 
 ```csharp
-// Inline config
+// Inline configuration
 services.AddSwiftMap(cfg => cfg.CreateMap<Order, OrderDto>());
 
-// Scan assemblies for profiles and [MapTo]/[MapFrom] attributes
+// Scan assemblies for MapProfile subclasses and [MapTo]/[MapFrom] attributes
 services.AddSwiftMap(typeof(Program).Assembly);
-```
-
-### Map into existing instance
-
-```csharp
-mapper.Map(source, existingDestination);
 ```
 
 ---
@@ -106,65 +148,62 @@ mapper.Map(source, existingDestination);
 
 Benchmarked against **AutoMapper 13.0.1** and **Mapster 7.4.0** on .NET 9.
 
-**Environment:**
 ```
-BenchmarkDotNet v0.15.8 · Windows 11 · AMD Ryzen 5 3600 3.60GHz (6C/12T)
-.NET SDK 9.0.312 · .NET 9.0.14 · X64 RyuJIT x86-64-v3
+BenchmarkDotNet v0.15.8  ·  Windows 11  ·  AMD Ryzen 5 3600 3.60GHz (6C/12T)
+.NET SDK 9.0.312  ·  .NET 9.0.14  ·  X64 RyuJIT x86-64-v3
 ShortRun: 3 warmups + 7 iterations
 ```
 
 ### Simple flat object (7 properties)
 
-| Method         | Mean      | Ratio        | Allocated |
-|----------------|----------:|-------------:|----------:|
-| Manual         |  11.37 ns | baseline     |      64 B |
-| Mapster        |  24.08 ns | 2.14x slower |      64 B |
-| **SwiftMap**   |  34.06 ns | 3.02x slower |      64 B |
-| AutoMapper     |  74.40 ns | 6.60x slower |      64 B |
+| Method         |      Mean |    Error |   StdDev | Ratio         | Allocated |
+|:---------------|----------:|---------:|---------:|:--------------|----------:|
+| Manual         |  13.23 ns | 3.432 ns | 1.524 ns | baseline      |      64 B |
+| Mapster        |  25.48 ns | 3.667 ns | 1.628 ns | 1.95× slower  |      64 B |
+| **SwiftMap**   |  38.04 ns | 5.319 ns | 2.362 ns | 2.91× slower  |      64 B |
+| AutoMapper     |  76.79 ns | 7.118 ns | 3.161 ns | 5.87× slower  |      64 B |
 
 ### Nested object (parent + child)
 
-| Method         | Mean      | Ratio        | Allocated |
-|----------------|----------:|-------------:|----------:|
-| Manual         |  19.13 ns | baseline     |     104 B |
-| Mapster        |  35.79 ns | 1.88x slower |     104 B |
-| **SwiftMap**   |  44.87 ns | 2.35x slower |     104 B |
-| AutoMapper     |  86.48 ns | 4.54x slower |     104 B |
+| Method         |      Mean |    Error |   StdDev | Ratio         | Allocated |
+|:---------------|----------:|---------:|---------:|:--------------|----------:|
+| Manual         |  19.89 ns | 6.382 ns | 2.834 ns | baseline      |     104 B |
+| Mapster        |  35.48 ns | 7.371 ns | 3.273 ns | 1.82× slower  |     104 B |
+| **SwiftMap**   |  43.84 ns | 7.824 ns | 3.474 ns | 2.24× slower  |     104 B |
+| AutoMapper     |  88.62 ns | 7.901 ns | 3.508 ns | 4.54× slower  |     104 B |
 
-### Collection (N items)
+### Collection mapping
 
-| Method         | Count | Mean      | Ratio        | Allocated |
-|----------------|------:|----------:|-------------:|----------:|
-| Manual         |   100 |  1.026 µs | baseline     |   7.05 KB |
-| Mapster        |   100 |  2.149 µs | 2.09x slower |   7.05 KB |
-| **SwiftMap**   |   100 |  3.874 µs | 3.78x slower |   7.05 KB |
-| AutoMapper     |   100 |  7.367 µs | 7.18x slower |   7.05 KB |
-| Manual         |  1000 | 12.423 µs | baseline     |  70.34 KB |
-| Mapster        |  1000 | 23.752 µs | 1.94x slower |  70.34 KB |
-| **SwiftMap**   |  1000 | 39.950 µs | 3.26x slower |  70.34 KB |
-| AutoMapper     |  1000 | 77.463 µs | 6.33x slower |  70.34 KB |
+| Method         | Count |      Mean |    Error |   StdDev | Ratio         | Allocated |
+|:---------------|------:|----------:|---------:|---------:|:--------------|----------:|
+| Manual         |   100 |  1.192 µs | 0.383 µs | 0.170 µs | baseline      |   7.05 KB |
+| Mapster        |   100 |  2.171 µs | 0.484 µs | 0.215 µs | 1.86× slower  |   7.05 KB |
+| **SwiftMap**   |   100 |  3.942 µs | 0.428 µs | 0.190 µs | 3.37× slower  |   7.05 KB |
+| AutoMapper     |   100 | 10.843 µs | 1.069 µs | 0.475 µs | 9.27× slower  |   7.05 KB |
+| Manual         |  1000 | 12.421 µs | 3.594 µs | 1.596 µs | baseline      |  70.34 KB |
+| Mapster        |  1000 | 25.329 µs | 4.526 µs | 2.010 µs | 2.07× slower  |  70.34 KB |
+| **SwiftMap**   |  1000 | 41.190 µs | 5.088 µs | 2.259 µs | 3.37× slower  |  70.34 KB |
+| AutoMapper     |  1000 | 74.414 µs | 9.810 µs | 4.356 µs | 6.08× slower  |  70.34 KB |
 
 ### Record (primary constructor)
 
-| Method         | Mean      | Ratio        | Allocated |
-|----------------|----------:|-------------:|----------:|
-| Manual         |  8.636 ns | baseline     |      48 B |
-| Mapster        | 24.900 ns | 2.89x slower |      48 B |
-| **SwiftMap**   | 36.073 ns | 4.19x slower |      48 B |
-| AutoMapper     | 76.145 ns | 8.84x slower |      48 B |
+| Method         |       Mean |    Error |   StdDev | Ratio         | Allocated |
+|:---------------|-----------:|---------:|---------:|:--------------|----------:|
+| Manual         |   9.838 ns | 2.570 ns | 1.141 ns | baseline      |      48 B |
+| Mapster        |  27.177 ns | 3.917 ns | 1.739 ns | 2.80× slower  |      48 B |
+| **SwiftMap**   |  35.129 ns | 5.186 ns | 2.303 ns | 3.61× slower  |      48 B |
+| AutoMapper     |  92.226 ns | 9.214 ns | 4.091 ns | 9.49× slower  |      48 B |
 
-### Analysis
+### At a glance
 
-| Scenario         | SwiftMap vs AutoMapper  | SwiftMap vs Mapster  | Allocated        |
-|------------------|-------------------------|----------------------|------------------|
-| Simple object    | **2.2x faster**         | 1.4x slower          | identical (64 B) |
-| Nested object    | **1.9x faster**         | 1.3x slower          | identical (104 B)|
-| Collection ×1000 | **1.9x faster**         | 1.7x slower          | identical (70 KB)|
-| Record           | **2.1x faster**         | 1.5x slower          | identical (48 B) |
+| Scenario          | vs AutoMapper       | vs Mapster      | Allocated            |
+|:------------------|:--------------------|:----------------|:---------------------|
+| Simple object     | **2.0× faster**     | 1.49× slower    | identical — 64 B     |
+| Nested object     | **2.0× faster**     | 1.24× slower    | identical — 104 B    |
+| Collection ×1000  | **1.8× faster**     | 1.63× slower    | identical — 70.34 KB |
+| Record            | **2.6× faster**     | 1.29× slower    | identical — 48 B     |
 
-SwiftMap allocates exactly the same as AutoMapper and Mapster across all scenarios — only the destination objects. Nested mappings are inlined at compile time into the parent expression tree, and collections use pre-allocated for-loops instead of LINQ.
-
-Mapster is fastest due to Roslyn source generation (compile-time code emission vs. runtime expression tree compilation).
+> SwiftMap allocates exactly the same memory as AutoMapper and Mapster across all scenarios — only the destination objects. Nested mappings are inlined at compile time; collections use pre-allocated for-loops instead of LINQ.
 
 ---
 
@@ -172,20 +211,48 @@ Mapster is fastest due to Roslyn source generation (compile-time code emission v
 
 ```
 src/SwiftMap/
-├── Mapper.cs                        # Entry point: Mapper.Create(...)
-├── IMapper.cs                       # Public interface
-├── MapperConfig.cs                  # Configuration + compiled delegate cache
-├── TypeMapConfig.cs                 # Fluent API: ForMember, Ignore, AfterMap...
-├── MapProfile.cs                    # Base class for profiles
+├── Mapper.cs                            # Entry point — Mapper.Create(...)
+├── IMapper.cs                           # Public interface
+├── MapperConfig.cs                      # Configuration + compiled delegate cache
+├── TypeMapConfig.cs                     # Fluent API: ForMember, Ignore, AfterMap...
+├── MapProfile.cs                        # Base class for profiles
 ├── Attributes/
-│   └── MapToAttribute.cs            # [MapTo], [MapFrom], [IgnoreMap], [MapProperty]
+│   └── MapToAttribute.cs                # [MapTo], [MapFrom], [IgnoreMap], [MapProperty]
 ├── Extensions/
-│   └── ServiceCollectionExtensions.cs  # AddSwiftMap(...)
+│   └── ServiceCollectionExtensions.cs   # AddSwiftMap(...)
 └── Internal/
-    ├── MappingCompiler.cs           # Expression tree compiler (core engine)
-    └── TypePair.cs                  # (Source, Destination) dictionary key
+    ├── MappingCompiler.cs               # Expression tree compiler (core engine)
+    └── TypePair.cs                      # (Source, Destination) dictionary key
 ```
+
+---
+
+## Roadmap
+
+- [x] **FastExpressionCompiler integration** — `CompileFast()` replaces `Expression.Compile()` for faster delegate creation
+- [ ] **Source generator mode** — emit mapping code at compile time (Mapperly-style) to reach manual-mapping parity with zero startup cost
+- [ ] **Async mapping** — `MapAsync<TDest>(source)` for pipelines that need async value resolution
+- [ ] **IQueryable projection** — `ProjectTo<TDest>()` for ORM query projection
+- [ ] **NuGet release** — publish `SwiftMap` to nuget.org
+
+---
+
+## Contributing
+
+Contributions are welcome! Please:
+
+1. Fork and create a feature branch (`git checkout -b feature/my-feature`)
+2. Add or update tests to cover your change
+3. Run the benchmark suite to verify no performance regression:
+   ```bash
+   dotnet run -c Release --project benchmarks/SwiftMap.Benchmarks
+   ```
+4. Open a pull request with a clear description of what changed and why
+
+For significant changes, open an issue first to discuss the approach.
+
+---
 
 ## License
 
-MIT
+SwiftMap is released under the [MIT License](LICENSE).

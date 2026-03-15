@@ -1,3 +1,5 @@
+using System.Runtime.CompilerServices;
+
 namespace SwiftMap;
 
 /// <summary>
@@ -24,6 +26,9 @@ public sealed class Mapper : IMapper
         return new Mapper(config);
     }
 
+    /// <summary>
+    /// Map from a boxed source (runtime type resolution path).
+    /// </summary>
     public TDestination Map<TDestination>(object source)
     {
         ArgumentNullException.ThrowIfNull(source);
@@ -31,6 +36,11 @@ public sealed class Mapper : IMapper
         return (TDestination)mapping(source);
     }
 
+    /// <summary>
+    /// Map using compile-time type knowledge.
+    /// AggressiveInlining eliminates the call frame overhead in tight mapping loops.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public TDestination Map<TSource, TDestination>(TSource source)
     {
         ArgumentNullException.ThrowIfNull(source);
@@ -38,6 +48,10 @@ public sealed class Mapper : IMapper
         return (TDestination)mapping(source!);
     }
 
+    /// <summary>
+    /// Map into an existing destination instance.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public TDestination Map<TSource, TDestination>(TSource source, TDestination destination)
     {
         ArgumentNullException.ThrowIfNull(source);
@@ -47,6 +61,9 @@ public sealed class Mapper : IMapper
         return destination;
     }
 
+    /// <summary>
+    /// Map with fully runtime-resolved types.
+    /// </summary>
     public object Map(object source, Type sourceType, Type destinationType)
     {
         ArgumentNullException.ThrowIfNull(source);

@@ -9,8 +9,10 @@ public abstract class TypeMapConfig
 {
     public Type SourceType { get; protected init; } = null!;
     public Type DestinationType { get; protected init; } = null!;
-    internal Dictionary<string, MemberMapConfig> MemberConfigs { get; } = new(StringComparer.OrdinalIgnoreCase);
-    internal HashSet<string> IgnoredMembers { get; } = new(StringComparer.OrdinalIgnoreCase);
+    // Ordinal is safe here: keys are always inserted and looked up using the exact CLR property name
+    // (member.Member.Name / destProp.Name), so case-insensitive comparison is unnecessary overhead.
+    internal Dictionary<string, MemberMapConfig> MemberConfigs { get; } = new(StringComparer.Ordinal);
+    internal HashSet<string> IgnoredMembers { get; } = new(StringComparer.Ordinal);
     internal LambdaExpression? CustomConstructor { get; set; }
     internal Func<object, object, object>? AfterMapAction { get; set; }
     internal bool ReverseMapEnabled { get; set; }
