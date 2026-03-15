@@ -1,6 +1,9 @@
 using System.Collections;
+using System.Collections.Concurrent;
 using System.Linq.Expressions;
 using System.Reflection;
+using System.Runtime.CompilerServices;
+using FastExpressionCompiler;
 
 namespace SwiftMap.Internal;
 
@@ -20,6 +23,33 @@ internal static class MappingCompiler
     internal delegate TypeMapConfig? ConfigResolver(Type sourceType, Type destType);
 
     private const int MaxInlineDepth = 8;
+
+    // ── Static reflection caches (populated once per type-pair, reused forever) ──────────────
+
+    /// <summary>Cache for implicit operator existence. Key: (from.TypeHandle, to.TypeHandle)</summary>
+    private static readonly ConcurrentDictionary<(RuntimeTypeHandle From, RuntimeTypeHandle To), bool>
+        _implicitConversionCache = new();
+
+    /// <summary>Cache for explicit operator existence.</summary>
+    private static readonly ConcurrentDictionary<(RuntimeTypeHandle From, RuntimeTypeHandle To), bool>
+        _explicitConversionCache = new();
+
+    /// <summary>Cache for Type.GetProperty(name, IgnoreCase) lookups. Key: (type.TypeHandle, name)</summary>
+    private static readonly ConcurrentDictionary<(RuntimeTypeHandle Type, string Name), PropertyInfo?>
+        _propCache = new();
+
+    /// <summary>Cache for collection element type. Key: type.TypeHandle</summary>
+    private static readonly ConcurrentDictionary<RuntimeTypeHandle, Type?>
+        _elementTypeCache = new();
+
+    /// <summary>
+    /// Cache for IList&lt;T&gt; interface + Count property per type.
+    /// Value: (countProp, indexerProp, ifaceType) — null ifaceType means not found.
+    /// </summary>
+    private static readonly ConcurrentDictionary<RuntimeTypeHandle, (PropertyInfo? Count, PropertyInfo? Indexer, Type? Iface)>
+        _collectionInfoCache = new();
+
+    // ─────────────────────────────────────────────────────────────────────────────────────────
 
     /// <summary>
     /// Builds a compiled Func&lt;object, object&gt; that maps source to a new destination instance.
@@ -63,7 +93,7 @@ internal static class MappingCompiler
             body);
 
         var lambda = Expression.Lambda<Func<object, object>>(block, sourceParam);
-        return lambda.Compile();
+        return lambda.CompileFast(ifFastFailedReturnNull: true) ?? lambda.Compile();
     }
 
     /// <summary>
@@ -94,7 +124,7 @@ internal static class MappingCompiler
 
         var block = Expression.Block([typedSource, typedDest], body);
         var lambda = Expression.Lambda<Action<object, object>>(block, sourceParam, destParam);
-        return lambda.Compile();
+        return lambda.CompileFast(ifFastFailedReturnNull: true) ?? lambda.Compile();
     }
 
     /// <summary>
@@ -153,11 +183,20 @@ internal static class MappingCompiler
             return new ParameterReplacer(ctor.Parameters[0], typedSource).Visit(ctor.Body);
         }
 
-        // Record / constructor with parameters — match by name
+        // Record / constructor with parameters — match by name.
+        // Optimized: single pass with for-loop instead of OrderByDescending + FirstOrDefault (avoids LINQ allocation).
         var constructors = destType.GetConstructors(BindingFlags.Public | BindingFlags.Instance);
-        var bestCtor = constructors
-            .OrderByDescending(c => c.GetParameters().Length)
-            .FirstOrDefault(c => c.GetParameters().Length > 0 && CanMapAllParameters(sourceType, c, config));
+        ConstructorInfo? bestCtor = null;
+        int bestParamCount = 0;
+        foreach (var candidate in constructors)
+        {
+            var paramCount = candidate.GetParameters().Length;
+            if (paramCount > 0 && paramCount > bestParamCount && CanMapAllParameters(sourceType, candidate, config))
+            {
+                bestCtor = candidate;
+                bestParamCount = paramCount;
+            }
+        }
 
         if (bestCtor != null)
         {
@@ -222,17 +261,25 @@ internal static class MappingCompiler
         int depth)
     {
         var assignments = new List<Expression>();
-        var destProps = destType.GetProperties(BindingFlags.Public | BindingFlags.Instance)
-            .Where(p => p.CanWrite || p.SetMethod is { } set && set.IsPublic);
+        var destProps = destType.GetProperties(BindingFlags.Public | BindingFlags.Instance);
 
-        // Track which properties were already set via constructor
+        // Track which properties were already set via constructor.
+        // Optimized: single pass for-loop instead of LINQ + allocation.
         var ctorParamNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         if (config?.CustomConstructor == null)
         {
             var constructors = destType.GetConstructors(BindingFlags.Public | BindingFlags.Instance);
-            var bestCtor = constructors
-                .OrderByDescending(c => c.GetParameters().Length)
-                .FirstOrDefault(c => c.GetParameters().Length > 0 && CanMapAllParameters(sourceType, c, config));
+            ConstructorInfo? bestCtor = null;
+            int bestParamCount = 0;
+            foreach (var candidate in constructors)
+            {
+                var paramCount = candidate.GetParameters().Length;
+                if (paramCount > 0 && paramCount > bestParamCount && CanMapAllParameters(sourceType, candidate, config))
+                {
+                    bestCtor = candidate;
+                    bestParamCount = paramCount;
+                }
+            }
 
             if (bestCtor != null)
             {
@@ -374,18 +421,31 @@ internal static class MappingCompiler
         return FindSourcePropertyDirect(sourceType, name);
     }
 
+    /// <summary>
+    /// Cached wrapper around Type.GetProperty with IgnoreCase flag.
+    /// Avoids repeated reflection on the same (type, propertyName) pair during compilation.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static PropertyInfo? FindSourcePropertyDirect(Type sourceType, string name)
     {
-        return sourceType.GetProperty(name,
-            BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase);
+        var key = (sourceType.TypeHandle, name);
+        return _propCache.GetOrAdd(key, static k =>
+            Type.GetTypeFromHandle(k.Type)!.GetProperty(k.Name,
+                BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase));
     }
 
+    /// <summary>
+    /// Determines the appropriate conversion expression.
+    /// Check order: identical → nullable → enum (cheap) → implicit/explicit operators (expensive) →
+    /// collections → nested objects → Convert.ChangeType → hard cast.
+    /// Enum checks are ordered BEFORE operator reflection to avoid reflection for common cases.
+    /// </summary>
     private static Expression ConvertIfNeeded(Expression source, Type targetType, ConfigResolver configResolver, int depth)
     {
         if (source.Type == targetType)
             return source;
 
-        // Nullable<T> to T or T to Nullable<T>
+        // ── 1. Nullable<T> ↔ T ──────────────────────────────────────────────────────────────
         var sourceUnderlying = Nullable.GetUnderlyingType(source.Type);
         var targetUnderlying = Nullable.GetUnderlyingType(targetType);
 
@@ -395,11 +455,7 @@ internal static class MappingCompiler
         if (targetUnderlying != null && source.Type == targetUnderlying)
             return Expression.Convert(source, targetType);
 
-        // Implicit/explicit conversion
-        if (HasImplicitConversion(source.Type, targetType) || HasExplicitConversion(source.Type, targetType))
-            return Expression.Convert(source, targetType);
-
-        // Enum conversions
+        // ── 2. Enum conversions (cheap — no reflection) ──────────────────────────────────────
         if (source.Type.IsEnum && targetType == typeof(string))
             return Expression.Call(source, nameof(object.ToString), Type.EmptyTypes);
 
@@ -421,7 +477,11 @@ internal static class MappingCompiler
                 targetType);
         }
 
-        // Collection mapping: IEnumerable<TSource> -> IEnumerable<TDest> / List<TDest> / TDest[]
+        // ── 3. Implicit/explicit operator (expensive — cached reflection) ────────────────────
+        if (HasImplicitConversion(source.Type, targetType) || HasExplicitConversion(source.Type, targetType))
+            return Expression.Convert(source, targetType);
+
+        // ── 4. Collection mapping ────────────────────────────────────────────────────────────
         var sourceElementType = GetCollectionElementType(source.Type);
         var destElementType = GetCollectionElementType(targetType);
 
@@ -430,9 +490,7 @@ internal static class MappingCompiler
             return BuildCollectionMapping(source, sourceElementType, destElementType, targetType, configResolver, depth);
         }
 
-        // Nested object mapping — inline (Mapster pattern: CreateInlineExpression)
-        // Instead of ctx.Map<T>() which re-enters the pipeline with closure allocations,
-        // recursively build the entire mapping expression inline.
+        // ── 5. Nested object mapping — inline (Mapster pattern: CreateInlineExpression) ──────
         if (!source.Type.IsValueType && !targetType.IsValueType
             && source.Type != typeof(string) && targetType != typeof(string))
         {
@@ -449,7 +507,7 @@ internal static class MappingCompiler
                 inlineMapping);
         }
 
-        // Last resort: Convert.ChangeType for primitives
+        // ── 6. Convert.ChangeType for IConvertible primitives ────────────────────────────────
         if (IsConvertible(source.Type) && IsConvertible(targetType))
         {
             var changeType = typeof(Convert).GetMethod(nameof(Convert.ChangeType), [typeof(object), typeof(Type)])!;
@@ -615,6 +673,7 @@ internal static class MappingCompiler
     /// <summary>
     /// Compiles a Func&lt;TSource, TDest&gt; for element mapping, used as a constant in expression trees.
     /// Allocated once at compile time — zero per-call cost.
+    /// Uses FEC for faster compilation and potentially faster delegates.
     /// </summary>
     private static Delegate CompileElementMapper(
         Type sourceType, Type destType, ConfigResolver configResolver, int depth)
@@ -623,7 +682,7 @@ internal static class MappingCompiler
         var param = Expression.Parameter(sourceType, "e");
         var mapping = BuildInlineMapping(sourceType, destType, param, configResolver, depth + 1);
         var lambda = Expression.Lambda(funcType, mapping, param);
-        return lambda.Compile();
+        return lambda.CompileFast(ifFastFailedReturnNull: true) ?? lambda.Compile();
     }
 
     private static bool TryGetCountAndIndexer(
@@ -651,20 +710,30 @@ internal static class MappingCompiler
                 return true;
             }
 
-            // Check IList<T> interface
-            foreach (var iface in source.Type.GetInterfaces())
+            // Check IList<T> interface — cached per type to avoid repeated GetInterfaces() calls
+            var info = _collectionInfoCache.GetOrAdd(source.Type.TypeHandle, static handle =>
             {
-                if (iface.IsGenericType && iface.GetGenericTypeDefinition() == typeof(IList<>))
+                var t = Type.GetTypeFromHandle(handle)!;
+                var cp = t.GetProperty("Count", typeof(int));
+                if (cp == null) return (null, null, null);
+                foreach (var iface in t.GetInterfaces())
                 {
-                    var ifaceIndexer = iface.GetProperty("Item");
-                    if (ifaceIndexer != null)
+                    if (iface.IsGenericType && iface.GetGenericTypeDefinition() == typeof(IList<>))
                     {
-                        countExpr = Expression.Property(source, countProp);
-                        var castSource = Expression.Convert(source, iface);
-                        indexerFactory = idx => Expression.MakeIndex(castSource, ifaceIndexer, [idx]);
-                        return true;
+                        var ifaceIndexer = iface.GetProperty("Item");
+                        if (ifaceIndexer != null)
+                            return (cp, ifaceIndexer, iface);
                     }
                 }
+                return (cp, null, null);
+            });
+
+            if (info.Indexer != null && info.Iface != null)
+            {
+                countExpr = Expression.Property(source, countProp);
+                var castSource = Expression.Convert(source, info.Iface);
+                indexerFactory = idx => Expression.MakeIndex(castSource, info.Indexer, [idx]);
+                return true;
             }
         }
 
@@ -673,45 +742,77 @@ internal static class MappingCompiler
         return false;
     }
 
+    /// <summary>
+    /// Returns the element type of a collection type, or null if not a collection.
+    /// Cached per type — GetInterfaces() is called at most once per type.
+    /// </summary>
     private static Type? GetCollectionElementType(Type type)
     {
-        if (type.IsArray)
-            return type.GetElementType();
-
-        if (type.IsGenericType)
+        return _elementTypeCache.GetOrAdd(type.TypeHandle, static handle =>
         {
-            var genDef = type.GetGenericTypeDefinition();
-            if (genDef == typeof(List<>) || genDef == typeof(IList<>) ||
-                genDef == typeof(ICollection<>) || genDef == typeof(IEnumerable<>) ||
-                genDef == typeof(IReadOnlyList<>) || genDef == typeof(IReadOnlyCollection<>))
+            var t = Type.GetTypeFromHandle(handle)!;
+
+            if (t.IsArray)
+                return t.GetElementType();
+
+            if (t.IsGenericType)
             {
-                return type.GetGenericArguments()[0];
+                var genDef = t.GetGenericTypeDefinition();
+                if (genDef == typeof(List<>) || genDef == typeof(IList<>) ||
+                    genDef == typeof(ICollection<>) || genDef == typeof(IEnumerable<>) ||
+                    genDef == typeof(IReadOnlyList<>) || genDef == typeof(IReadOnlyCollection<>))
+                {
+                    return t.GetGenericArguments()[0];
+                }
             }
-        }
 
-        foreach (var iface in type.GetInterfaces())
-        {
-            if (iface.IsGenericType && iface.GetGenericTypeDefinition() == typeof(IEnumerable<>))
-                return iface.GetGenericArguments()[0];
-        }
+            // Fallback: scan interfaces (early exit on first match)
+            foreach (var iface in t.GetInterfaces())
+            {
+                if (iface.IsGenericType && iface.GetGenericTypeDefinition() == typeof(IEnumerable<>))
+                    return iface.GetGenericArguments()[0];
+            }
 
-        return null;
+            return null;
+        });
     }
 
+    /// <summary>
+    /// Checks for op_Implicit between two types.
+    /// Cached: GetMethods() is called at most once per (from, to) pair.
+    /// </summary>
     private static bool HasImplicitConversion(Type from, Type to)
     {
-        return from.GetMethods(BindingFlags.Public | BindingFlags.Static)
-            .Any(m => m.Name == "op_Implicit" && m.ReturnType == to) ||
-               to.GetMethods(BindingFlags.Public | BindingFlags.Static)
-            .Any(m => m.Name == "op_Implicit" && m.GetParameters()[0].ParameterType == from);
+        var key = (from.TypeHandle, to.TypeHandle);
+        return _implicitConversionCache.GetOrAdd(key, static k =>
+        {
+            var fromType = Type.GetTypeFromHandle(k.Item1)!;
+            var toType = Type.GetTypeFromHandle(k.Item2)!;
+            return fromType.GetMethods(BindingFlags.Public | BindingFlags.Static)
+                       .Any(m => m.Name == "op_Implicit" && m.ReturnType == toType) ||
+                   toType.GetMethods(BindingFlags.Public | BindingFlags.Static)
+                       .Any(m => m.Name == "op_Implicit" && m.GetParameters().Length > 0 &&
+                                 m.GetParameters()[0].ParameterType == fromType);
+        });
     }
 
+    /// <summary>
+    /// Checks for op_Explicit between two types.
+    /// Cached: GetMethods() is called at most once per (from, to) pair.
+    /// </summary>
     private static bool HasExplicitConversion(Type from, Type to)
     {
-        return from.GetMethods(BindingFlags.Public | BindingFlags.Static)
-            .Any(m => m.Name == "op_Explicit" && m.ReturnType == to) ||
-               to.GetMethods(BindingFlags.Public | BindingFlags.Static)
-            .Any(m => m.Name == "op_Explicit" && m.GetParameters()[0].ParameterType == from);
+        var key = (from.TypeHandle, to.TypeHandle);
+        return _explicitConversionCache.GetOrAdd(key, static k =>
+        {
+            var fromType = Type.GetTypeFromHandle(k.Item1)!;
+            var toType = Type.GetTypeFromHandle(k.Item2)!;
+            return fromType.GetMethods(BindingFlags.Public | BindingFlags.Static)
+                       .Any(m => m.Name == "op_Explicit" && m.ReturnType == toType) ||
+                   toType.GetMethods(BindingFlags.Public | BindingFlags.Static)
+                       .Any(m => m.Name == "op_Explicit" && m.GetParameters().Length > 0 &&
+                                 m.GetParameters()[0].ParameterType == fromType);
+        });
     }
 
     private static bool IsConvertible(Type type)

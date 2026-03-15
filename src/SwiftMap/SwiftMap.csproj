@@ -6,11 +6,31 @@
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
     <RootNamespace>SwiftMap</RootNamespace>
-    <Description>A fast, simple, convention-based object-object mapper for .NET</Description>
+
+    <!-- NuGet package metadata -->
+    <PackageId>SwiftMap</PackageId>
+    <Version>1.0.0</Version>
+    <Authors>Mauro</Authors>
+    <Description>Zero-allocation, expression-tree-compiled object mapper for .NET. Faster than AutoMapper, targeting Mapster parity.</Description>
+    <PackageTags>mapper;mapping;object-mapper;dotnet;csharp;performance;expression-trees</PackageTags>
+    <PackageProjectUrl>https://github.com/YOUR_USERNAME/SwiftMap</PackageProjectUrl>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/YOUR_USERNAME/SwiftMap</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="FastExpressionCompiler" Version="5.3.0" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="9.0.*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
 
 </Project>
