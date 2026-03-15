@@ -7,13 +7,21 @@ namespace SwiftMap;
 /// <summary>
 /// Holds all mapping configurations and compiled delegates.
 /// Thread-safe and immutable after Build().
+/// Uses TryGetValue fast-path + static lambda pattern (MessagePack/NServiceBus)
+/// for zero-allocation delegate lookups on the hot path.
 /// </summary>
 public sealed class MapperConfig
 {
     private readonly Dictionary<TypePair, TypeMapConfig> _typeMapConfigs = [];
-    private readonly ConcurrentDictionary<TypePair, Func<object, MapperContext, object>> _compiledMaps = [];
-    private readonly ConcurrentDictionary<TypePair, Action<object, object, MapperContext>> _compiledMapsInto = [];
+    private readonly ConcurrentDictionary<TypePair, Func<object, object>> _compiledMaps = [];
+    private readonly ConcurrentDictionary<TypePair, Action<object, object>> _compiledMapsInto = [];
+    private readonly MappingCompiler.ConfigResolver _configResolver;
     private bool _isBuilt;
+
+    public MapperConfig()
+    {
+        _configResolver = ResolveConfig;
+    }
 
     /// <summary>
     /// Add a profile containing mapping configurations.
@@ -113,28 +121,47 @@ public sealed class MapperConfig
         return this;
     }
 
-    internal Func<object, MapperContext, object> GetOrCompileMapping(Type sourceType, Type destType, MapperContext context)
+    /// <summary>
+    /// Zero-allocation on cache hit: TryGetValue fast-path avoids closure/delegate creation.
+    /// On cache miss: static lambda + TArg overload (ConcurrentDictionary pattern from .NET 9).
+    /// </summary>
+    internal Func<object, object> GetOrCompileMapping(Type sourceType, Type destType)
     {
         var pair = new TypePair(sourceType, destType);
-        return _compiledMaps.GetOrAdd(pair, _ =>
-        {
-            _typeMapConfigs.TryGetValue(pair, out var config);
-            return MappingCompiler.CompileMapping(sourceType, destType, config, context);
-        });
+
+        // Fast path — zero allocation (no closure, no delegate, no display class)
+        if (_compiledMaps.TryGetValue(pair, out var cached))
+            return cached;
+
+        // Slow path — static lambda avoids closure via TArg overload
+        return _compiledMaps.GetOrAdd(pair,
+            static (p, resolver) => MappingCompiler.CompileMapping(p.Source, p.Destination, resolver),
+            _configResolver);
     }
 
-    internal Action<object, object, MapperContext> GetOrCompileMappingInto(Type sourceType, Type destType, MapperContext context)
+    /// <summary>
+    /// Zero-allocation cache lookup for map-into operations.
+    /// </summary>
+    internal Action<object, object> GetOrCompileMappingInto(Type sourceType, Type destType)
     {
         var pair = new TypePair(sourceType, destType);
-        return _compiledMapsInto.GetOrAdd(pair, _ =>
-        {
-            _typeMapConfigs.TryGetValue(pair, out var config);
-            return MappingCompiler.CompileMappingInto(sourceType, destType, config, context);
-        });
+
+        if (_compiledMapsInto.TryGetValue(pair, out var cached))
+            return cached;
+
+        return _compiledMapsInto.GetOrAdd(pair,
+            static (p, resolver) => MappingCompiler.CompileMappingInto(p.Source, p.Destination, resolver),
+            _configResolver);
     }
 
     internal bool HasMapping(Type sourceType, Type destType)
         => _typeMapConfigs.ContainsKey(new TypePair(sourceType, destType));
+
+    private TypeMapConfig? ResolveConfig(Type sourceType, Type destType)
+    {
+        _typeMapConfigs.TryGetValue(new TypePair(sourceType, destType), out var config);
+        return config;
+    }
 
     private static TypeMapConfig CreateDefaultConfig(Type source, Type dest)
     {
