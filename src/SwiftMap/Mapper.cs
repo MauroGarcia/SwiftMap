@@ -70,4 +70,34 @@ public sealed class Mapper : IMapper
         var mapping = _config.GetOrCompileMapping(sourceType, destinationType);
         return mapping(source);
     }
+
+    /// <summary>
+    /// Apply non-null fields from <paramref name="source"/> onto <paramref name="destination"/>.
+    /// Fields that are null (reference types) or have no value (Nullable&lt;T&gt;) in the source
+    /// are silently ignored, preserving the existing value on the destination.
+    /// Non-nullable value types are always assigned.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void Patch<TSource, TDest>(TSource source, TDest destination)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(destination);
+        var patchDelegate = _config.GetOrCompilePatch(typeof(TSource), typeof(TDest));
+        patchDelegate(source!, destination!);
+    }
+
+    /// <summary>
+    /// Apply non-null fields using an inline configuration override.
+    /// The <paramref name="configure"/> action is applied on top of any existing registration.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void Patch<TSource, TDest>(TSource source, TDest destination, Action<TypeMapConfig<TSource, TDest>> configure)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(destination);
+        var config = new TypeMapConfig<TSource, TDest>();
+        configure(config);
+        var patchDelegate = _config.GetOrCompilePatch(typeof(TSource), typeof(TDest), config);
+        patchDelegate(source!, destination!);
+    }
 }

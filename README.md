@@ -19,7 +19,7 @@ _Source generator mode achieves **manual-mapping parity** at compile time (Mappe
 
 - **Source generator mode** — `[Mapper]` partial class emits mapping bodies at **compile time**; zero startup cost, zero delegate dispatch, zero reflection at call time — identical to hand-written code
 - **Runtime expression-tree mode** — mappings compile once to native delegates via [FastExpressionCompiler](https://github.com/dadhi/FastExpressionCompiler); subsequent calls are allocation-free
-- **Fluent, discoverable API** — `ForMember`, `Ignore`, `AfterMap`, `ReverseMap`, `NullSubstitute`, `Condition`, and more
+- **Fluent, discoverable API** — `ForMember`, `Ignore`, `AfterMap`, `ReverseMap`, `NullSubstitute`, `Condition`, `Patch`, and more
 - **No heavy dependencies** — single NuGet package; only depends on `Microsoft.Extensions.DependencyInjection.Abstractions`
 - **Records & init-only properties** — full support for C# 9+ records via primary constructor selection
 - **First-class DI support** — drop-in `services.AddSwiftMap(...)` with profile scanning
@@ -161,6 +161,42 @@ services.AddSwiftMap(cfg => cfg.CreateMap<Order, OrderDto>());
 services.AddSwiftMap(typeof(Program).Assembly);
 ```
 
+### HTTP PATCH — Patch Semantics
+
+`Patch` applies only the **non-null fields** from source onto an existing destination instance, leaving everything else untouched. Designed for HTTP PATCH endpoints where the client sends only the fields it wants to change.
+
+```csharp
+// Only Name was sent — Age and Email are null (not provided by client)
+var updateDto = new UpdateUserDto { Name = "João", Age = null };
+var user = await dbContext.Users.FindAsync(id); // { Name = "Maria", Age = 30, Email = "m@m.com" }
+
+mapper.Patch(updateDto, user);
+// Result: { Name = "João", Age = 30, Email = "m@m.com" }
+// Age and Email were preserved — they were null in the dto
+```
+
+Works automatically by convention — no `CreateMap` required. For advanced scenarios:
+
+```csharp
+// Skip fields that match their default value (0, false, Guid.Empty, etc.)
+mapper.Patch(dto, entity, cfg => cfg.AsPatch(PatchBehavior.SkipDefaultFields));
+
+// Register patch behavior in a profile
+public class AppProfile : MapProfile
+{
+    public AppProfile()
+    {
+        CreateMap<UpdateUserDto, User>().AsPatch();
+    }
+}
+```
+
+| Source field type | Behavior |
+|:------------------|:---------|
+| `string` / reference type | Skipped if `null` |
+| `Nullable<T>` (`int?`, `bool?`, …) | Skipped if `!HasValue` |
+| Non-nullable value type (`int`, `bool`, …) | Always applied (cannot be null) |
+
 ---
 
 ## Benchmarks
@@ -264,6 +300,7 @@ src/
 
 - [x] **FastExpressionCompiler integration** — `CompileFast()` replaces `Expression.Compile()` for faster delegate creation
 - [x] **Source generator mode** — `[Mapper]` partial class emits mapping bodies at compile time; reaches manual-mapping parity
+- [x] **Patch semantics** — `mapper.Patch(dto, entity)` applies only non-null fields; built-in support for HTTP PATCH endpoints
 - [ ] **Async mapping** — `MapAsync<TDest>(source)` for pipelines that need async value resolution
 - [ ] **IQueryable projection** — `ProjectTo<TDest>()` for ORM query projection
 - [ ] **NuGet release** — publish `SwiftMap` to nuget.org

@@ -3,6 +3,23 @@ using System.Linq.Expressions;
 namespace SwiftMap;
 
 /// <summary>
+/// Controls how null/default source values are handled during a Patch operation.
+/// </summary>
+public enum PatchBehavior
+{
+    /// <summary>
+    /// Skip source fields that are null (reference types and Nullable&lt;T&gt;).
+    /// Non-nullable value types are always assigned.
+    /// </summary>
+    SkipNullFields,
+
+    /// <summary>
+    /// Skip source fields that equal default(T) — includes 0, false, Guid.Empty, null, etc.
+    /// </summary>
+    SkipDefaultFields
+}
+
+/// <summary>
 /// Non-generic base for storing type map configurations.
 /// </summary>
 public abstract class TypeMapConfig
@@ -16,6 +33,7 @@ public abstract class TypeMapConfig
     internal LambdaExpression? CustomConstructor { get; set; }
     internal Func<object, object, object>? AfterMapAction { get; set; }
     internal bool ReverseMapEnabled { get; set; }
+    internal PatchBehavior? PatchMode { get; set; }
 }
 
 /// <summary>
@@ -83,6 +101,17 @@ public sealed class TypeMapConfig<TSource, TDestination> : TypeMapConfig
     public TypeMapConfig<TSource, TDestination> ReverseMap()
     {
         ReverseMapEnabled = true;
+        return this;
+    }
+
+    /// <summary>
+    /// Mark this map as a patch map, controlling how null/default source values are handled.
+    /// When used with <see cref="IMapper.Patch{TSource,TDest}(TSource,TDest)"/>, only non-null (or non-default)
+    /// source fields are applied to the destination.
+    /// </summary>
+    public TypeMapConfig<TSource, TDestination> AsPatch(PatchBehavior behavior = PatchBehavior.SkipNullFields)
+    {
+        PatchMode = behavior;
         return this;
     }
 

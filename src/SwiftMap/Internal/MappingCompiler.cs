@@ -128,6 +128,130 @@ internal static class MappingCompiler
     }
 
     /// <summary>
+    /// Builds a compiled Action&lt;object, object&gt; that applies non-null/non-default source fields
+    /// onto an existing destination instance (Patch semantics).
+    /// For each source property:
+    ///   - Reference types and Nullable&lt;T&gt;: wrapped in a null-check (SkipNullFields)
+    ///     or default(T)-check (SkipDefaultFields) — destination is only updated when source has a value.
+    ///   - Non-nullable value types: always assigned (cannot be null).
+    /// </summary>
+    internal static Action<object, object> CompilePatchDelegate(
+        Type sourceType,
+        Type destType,
+        TypeMapConfig? config = null,
+        PatchBehavior behavior = PatchBehavior.SkipNullFields)
+    {
+        var sourceParam = Expression.Parameter(typeof(object), "src");
+        var destParam = Expression.Parameter(typeof(object), "dest");
+        var typedSource = Expression.Variable(sourceType, "typedSrc");
+        var typedDest = Expression.Variable(destType, "typedDest");
+
+        var body = new List<Expression>
+        {
+            Expression.Assign(typedSource, Expression.Convert(sourceParam, sourceType)),
+            Expression.Assign(typedDest, Expression.Convert(destParam, destType))
+        };
+
+        var destProps = destType.GetProperties(BindingFlags.Public | BindingFlags.Instance);
+
+        foreach (var destProp in destProps)
+        {
+            if (!destProp.CanWrite) continue;
+            if (config?.IgnoredMembers.Contains(destProp.Name) == true) continue;
+            if (destProp.GetCustomAttribute<IgnoreMapAttribute>() != null) continue;
+
+            // Resolve source property by name (case-insensitive convention)
+            var mapPropAttr = destProp.GetCustomAttribute<MapPropertyAttribute>();
+            var sourceName = mapPropAttr?.SourcePropertyName ?? destProp.Name;
+            var sourceProp = FindSourcePropertyDirect(sourceType, sourceName);
+
+            if (sourceProp == null) continue;
+            if (sourceProp.GetCustomAttribute<IgnoreMapAttribute>() != null) continue;
+
+            Expression sourcePropExpr = Expression.Property(typedSource, sourceProp);
+            Expression destPropExpr = Expression.Property(typedDest, destProp);
+
+            // Convert value if types differ (e.g., int? -> int)
+            Expression valueExpr = sourcePropExpr;
+            if (sourceProp.PropertyType != destProp.PropertyType)
+            {
+                var srcUnderlying = Nullable.GetUnderlyingType(sourceProp.PropertyType);
+                if (srcUnderlying != null && srcUnderlying == destProp.PropertyType)
+                {
+                    // Nullable<T> -> T:  use .Value (safe because we only assign inside HasValue check)
+                    valueExpr = Expression.Property(sourcePropExpr, "Value");
+                }
+                else if (srcUnderlying != null && destProp.PropertyType == sourceProp.PropertyType)
+                {
+                    // same nullable type — assign as-is
+                    valueExpr = sourcePropExpr;
+                }
+                else
+                {
+                    try { valueExpr = Expression.Convert(sourcePropExpr, destProp.PropertyType); }
+                    catch { continue; } // incompatible types — skip
+                }
+            }
+
+            Expression assignment = Expression.Assign(destPropExpr, valueExpr);
+
+            var srcNullable = Nullable.GetUnderlyingType(sourceProp.PropertyType);
+            bool isReferenceType = !sourceProp.PropertyType.IsValueType;
+            bool isNullableValueType = srcNullable != null;
+
+            if (behavior == PatchBehavior.SkipNullFields)
+            {
+                if (isReferenceType)
+                {
+                    // if (src.Prop != null) dest.Prop = src.Prop;
+                    body.Add(Expression.IfThen(
+                        Expression.NotEqual(sourcePropExpr, Expression.Constant(null, sourceProp.PropertyType)),
+                        assignment));
+                }
+                else if (isNullableValueType)
+                {
+                    // if (src.Prop.HasValue) dest.Prop = src.Prop.Value;  (or dest.Prop = src.Prop for Nullable dest)
+                    body.Add(Expression.IfThen(
+                        Expression.Property(sourcePropExpr, "HasValue"),
+                        assignment));
+                }
+                else
+                {
+                    // Non-nullable value type — always assign
+                    body.Add(assignment);
+                }
+            }
+            else // SkipDefaultFields
+            {
+                // Skip when source == default(T)
+                Expression isDefault;
+                if (isReferenceType)
+                {
+                    isDefault = Expression.Equal(sourcePropExpr, Expression.Constant(null, sourceProp.PropertyType));
+                }
+                else if (isNullableValueType)
+                {
+                    isDefault = Expression.Not(Expression.Property(sourcePropExpr, "HasValue"));
+                }
+                else
+                {
+                    isDefault = Expression.Equal(sourcePropExpr,
+                        Expression.Default(sourceProp.PropertyType));
+                }
+
+                body.Add(Expression.IfThen(Expression.Not(isDefault), assignment));
+            }
+        }
+
+        if (body.Count <= 2)
+            body.Add(Expression.Empty());
+
+        var block = Expression.Block([typedSource, typedDest], body);
+        var lambda = Expression.Lambda<Action<object, object>>(block, sourceParam, destParam);
+        return lambda.CompileFast(ifFastFailedReturnNull: true) ?? lambda.Compile();
+    }
+
+    /// <summary>
     /// Builds an inline mapping expression for a nested object.
     /// Instead of calling ctx.Map&lt;T&gt;() (which re-enters the pipeline with closure allocations),
     /// this recursively builds the full mapping expression tree inline.

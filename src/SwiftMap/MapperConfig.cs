@@ -15,6 +15,7 @@ public sealed class MapperConfig
     private readonly Dictionary<TypePair, TypeMapConfig> _typeMapConfigs = [];
     private readonly ConcurrentDictionary<TypePair, Func<object, object>> _compiledMaps = [];
     private readonly ConcurrentDictionary<TypePair, Action<object, object>> _compiledMapsInto = [];
+    private readonly ConcurrentDictionary<TypePair, Action<object, object>> _compiledPatches = [];
     private readonly MappingCompiler.ConfigResolver _configResolver;
     private bool _isBuilt;
 
@@ -152,6 +153,34 @@ public sealed class MapperConfig
         return _compiledMapsInto.GetOrAdd(pair,
             static (p, resolver) => MappingCompiler.CompileMappingInto(p.Source, p.Destination, resolver),
             _configResolver);
+    }
+
+    /// <summary>
+    /// Zero-allocation cache lookup for patch operations.
+    /// Uses the registered TypeMapConfig (if any) to respect IgnoredMembers and PatchMode.
+    /// </summary>
+    internal Action<object, object> GetOrCompilePatch(Type sourceType, Type destType)
+    {
+        var pair = new TypePair(sourceType, destType);
+
+        if (_compiledPatches.TryGetValue(pair, out var cached))
+            return cached;
+
+        return _compiledPatches.GetOrAdd(pair, static (p, self) =>
+        {
+            self._typeMapConfigs.TryGetValue(p, out var cfg);
+            var behavior = cfg?.PatchMode ?? PatchBehavior.SkipNullFields;
+            return MappingCompiler.CompilePatchDelegate(p.Source, p.Destination, cfg, behavior);
+        }, this);
+    }
+
+    /// <summary>
+    /// Compile a patch delegate from an ad-hoc config (not cached — inline overrides are one-shot).
+    /// </summary>
+    internal Action<object, object> GetOrCompilePatch(Type sourceType, Type destType, TypeMapConfig inlineConfig)
+    {
+        var behavior = inlineConfig.PatchMode ?? PatchBehavior.SkipNullFields;
+        return MappingCompiler.CompilePatchDelegate(sourceType, destType, inlineConfig, behavior);
     }
 
     internal bool HasMapping(Type sourceType, Type destType)
