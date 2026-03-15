@@ -1,3 +1,5 @@
+<div align="right"><a href="README.pt-BR.md">🇧🇷 Português</a></div>
+
 <div align="center">
 
 # SwiftMap
