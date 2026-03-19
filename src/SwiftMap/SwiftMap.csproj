@@ -13,9 +13,9 @@
     <Authors>Mauro</Authors>
     <Description>Zero-allocation, expression-tree-compiled object mapper for .NET. Faster than AutoMapper, targeting Mapster parity.</Description>
     <PackageTags>mapper;mapping;object-mapper;dotnet;csharp;performance;expression-trees</PackageTags>
-    <PackageProjectUrl>https://github.com/YOUR_USERNAME/SwiftMap</PackageProjectUrl>
+    <PackageProjectUrl>https://github.com/MauroGarcia/SwiftMap</PackageProjectUrl>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <RepositoryUrl>https://github.com/YOUR_USERNAME/SwiftMap</RepositoryUrl>
+    <RepositoryUrl>https://github.com/MauroGarcia/SwiftMap</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <NoWarn>$(NoWarn);CS1591</NoWarn>

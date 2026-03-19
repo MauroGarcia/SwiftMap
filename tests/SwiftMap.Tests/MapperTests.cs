@@ -271,6 +271,57 @@ public class CollectionMappingTests
         Assert.Equal(99.99m, dto.Orders[0].Total);
         Assert.Equal(101, dto.Orders[1].OrderId);
     }
+
+    [Fact]
+    public async Task Maps_async_stream_without_materializing_source()
+    {
+        var mapper = Mapper.Create(cfg => cfg.CreateMap<Order, OrderDto>());
+
+        var mapped = mapper.MapAsync<Order, OrderDto>(GetOrdersAsync());
+        var results = new List<OrderDto>();
+
+        await foreach (var item in mapped)
+        {
+            results.Add(item);
+        }
+
+        Assert.Equal(2, results.Count);
+        Assert.Equal(100, results[0].OrderId);
+        Assert.Equal(99.99m, results[0].Total);
+        Assert.Equal(101, results[1].OrderId);
+        Assert.Equal(49.99m, results[1].Total);
+    }
+
+    [Fact]
+    public async Task Maps_async_stream_respecting_cancellation()
+    {
+        var mapper = Mapper.Create(cfg => cfg.CreateMap<Order, OrderDto>());
+        using var cts = new CancellationTokenSource();
+
+        var mapped = mapper.MapAsync<Order, OrderDto>(GetOrdersAsync(cts.Token), cts.Token);
+
+        await using var enumerator = mapped.GetAsyncEnumerator(cts.Token);
+        Assert.True(await enumerator.MoveNextAsync());
+        Assert.Equal(100, enumerator.Current.OrderId);
+
+        cts.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+        {
+            while (await enumerator.MoveNextAsync())
+            {
+            }
+        });
+    }
+
+    private static async IAsyncEnumerable<Order> GetOrdersAsync(
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        yield return new Order { OrderId = 100, Total = 99.99m };
+        await Task.Yield();
+        cancellationToken.ThrowIfCancellationRequested();
+        yield return new Order { OrderId = 101, Total = 49.99m };
+    }
 }
 
 public class EnumMappingTests

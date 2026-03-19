@@ -8,6 +8,9 @@ public interface IMapper
     TDestination Map<TDestination>(object source);
     TDestination Map<TSource, TDestination>(TSource source);
     TDestination Map<TSource, TDestination>(TSource source, TDestination destination);
+    IAsyncEnumerable<TDestination> MapAsync<TSource, TDestination>(
+        IAsyncEnumerable<TSource> source,
+        CancellationToken cancellationToken = default);
     object Map(object source, Type sourceType, Type destinationType);
 
     /// <summary>

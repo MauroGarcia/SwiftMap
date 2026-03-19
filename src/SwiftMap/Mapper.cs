@@ -62,6 +62,19 @@ public sealed class Mapper : IMapper
     }
 
     /// <summary>
+    /// Lazily map an async stream without materializing the full result set.
+    /// The compiled mapping delegate is resolved once and reused for the entire enumeration.
+    /// </summary>
+    public IAsyncEnumerable<TDestination> MapAsync<TSource, TDestination>(
+        IAsyncEnumerable<TSource> source,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        var mapping = _config.GetOrCompileMapping(typeof(TSource), typeof(TDestination));
+        return MapAsyncIterator<TSource, TDestination>(source, mapping, cancellationToken);
+    }
+
+    /// <summary>
     /// Map with fully runtime-resolved types.
     /// </summary>
     public object Map(object source, Type sourceType, Type destinationType)
@@ -99,5 +112,16 @@ public sealed class Mapper : IMapper
         configure(config);
         var patchDelegate = _config.GetOrCompilePatch(typeof(TSource), typeof(TDest), config);
         patchDelegate(source!, destination!);
+    }
+
+    private static async IAsyncEnumerable<TDestination> MapAsyncIterator<TSource, TDestination>(
+        IAsyncEnumerable<TSource> source,
+        Func<object, object> mapping,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        await foreach (var item in source.WithCancellation(cancellationToken).ConfigureAwait(false))
+        {
+            yield return (TDestination)mapping(item!);
+        }
     }
 }
