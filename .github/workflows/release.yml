@@ -1,0 +1,66 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write  # needed to create GitHub Releases
+
+jobs:
+  release:
+    name: Publish NuGet & Create Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      # Extract version from tag (v1.2.3 → 1.2.3)
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build --no-restore --configuration Release -p:Version=${{ steps.version.outputs.VERSION }}
+
+      - name: Test
+        run: dotnet test --no-build --configuration Release --verbosity normal
+
+      - name: Pack
+        run: dotnet pack src/SwiftMap/SwiftMap.csproj --no-build --configuration Release -p:Version=${{ steps.version.outputs.VERSION }} --output ./nupkg
+
+      # Extract release notes for this version from CHANGELOG.md
+      - name: Extract release notes
+        id: release_notes
+        run: |
+          VERSION=${{ steps.version.outputs.VERSION }}
+          NOTES=$(awk "/^## \[$VERSION\]/{found=1; next} found && /^## /{exit} found{print}" CHANGELOG.md)
+          # Write to a temp file to handle multiline safely
+          echo "$NOTES" > release_notes.txt
+          echo "NOTES_FILE=release_notes.txt" >> $GITHUB_OUTPUT
+
+      - name: Publish to NuGet
+        run: |
+          dotnet nuget push ./nupkg/*.nupkg \
+            --api-key ${{ secrets.NUGET_API_KEY }} \
+            --source https://api.nuget.org/v3/index.json \
+            --skip-duplicate
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create ${{ github.ref_name }} \
+            --title "${{ github.ref_name }}" \
+            --notes-file release_notes.txt \
+            ./nupkg/*.nupkg
