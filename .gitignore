@@ -45,3 +45,12 @@ Thumbs.db
 
 # Internal docs
 ROADMAP.md
+
+# Claude Code
+.claude/
+.claire/
+
+# Environment
+.env
+.env.local
+*.local.json
